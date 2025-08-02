@@ -7,15 +7,12 @@ import os
 import time
 import io
 
-# المكوّن الجديد للبث المستمر من الكاميرا
-from camera_input_live import camera_input_live
-
 EXCEL_FILE = "Updated_Stock_Data.xlsx"
 SHEET_NAME = 0
 
+# تحميل البيانات من ملف ثابت أو ملف مرفوع
 @st.cache_data
 def load_data(file=None):
-    """تحميل البيانات من ملف مرفوع أو محلي"""
     if file is not None:
         df = pd.read_excel(file, sheet_name=SHEET_NAME, engine="openpyxl")
     elif os.path.exists(EXCEL_FILE):
@@ -32,40 +29,46 @@ def load_data(file=None):
     df["current_balance"] = df["in"].fillna(0) - df["out"].fillna(0)
     return df
 
+# حفظ البيانات في ملف إكسل محلي (فقط عند عدم استخدام ملف مرفوع)
 def save_data(df):
-    """حفظ البيانات في ملف إكسل محلي"""
     df.to_excel(EXCEL_FILE, index=False)
 
+# البحث عن منتج
 def find_item(df, code):
-    """البحث عن منتج بحسب رقم الكود"""
     return df[df["code num"].astype(str) == code]
 
+# تحويل البيانات إلى ملف Excel للتحميل
 @st.cache_data
 def convert_df_to_excel(dataframe):
-    """تحويل الداتا فريم إلى ملف إكسل"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         dataframe.to_excel(writer, index=False)
     return output.getvalue()
 
+last_scanned = ""
+last_time = 0
+
 def main():
+    global last_scanned, last_time
+
     st.set_page_config(page_title="Warehouse System", layout="wide")
     st.title("📦 Warehouse System with Barcode, Excel, and Analytics")
 
-    # اختيار ملف إكسل من المستخدم
+    # رفع ملف الإكسل
     uploaded_file = st.sidebar.file_uploader("⬆️ رفع ملف Excel", type=["xlsx"])
 
     # تحميل البيانات
     df = load_data(uploaded_file)
 
-    # عرض البيانات الكاملة
+    # عرض كامل البيانات
     with st.expander("📋 عرض البيانات الكاملة"):
         st.dataframe(df, use_container_width=True)
 
-    # فلاتر جانبية
+    # الفلاتر
     st.sidebar.header("🔍 فلترة")
     locations = df["LOCATION"].dropna().unique().tolist()
     units = df["Unit"].dropna().unique().tolist()
+
     selected_location = st.sidebar.selectbox("اختر الموقع", ["كل المواقع"] + locations)
     selected_unit = st.sidebar.selectbox("اختر الوحدة", ["كل الوحدات"] + units)
 
@@ -75,12 +78,13 @@ def main():
     if selected_unit != "كل الوحدات":
         df_filtered = df_filtered[df_filtered["Unit"] == selected_unit]
 
-    # ملخص وتحليل البيانات
+    # الملخص والتحليل
     st.subheader("📊 ملخص وتحليل البيانات")
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 عدد المنتجات", len(df_filtered))
     col2.metric("📍 عدد المواقع", df_filtered["LOCATION"].nunique())
     col3.metric("🧮 عدد الوحدات", df_filtered["Unit"].nunique())
+
     col4, col5, col6 = st.columns(3)
     col4.metric("📥 إجمالي الإدخال", int(df_filtered["in"].sum(skipna=True)))
     col5.metric("📤 إجمالي الإخراج", int(df_filtered["out"].sum(skipna=True)))
@@ -95,7 +99,7 @@ def main():
     st.subheader("🔝 أعلى العناصر حسب الكمية")
     st.dataframe(df_filtered.sort_values(by="Qty", ascending=False)[["Description", "Qty"]].head(10))
 
-    # زر تحميل البيانات المصفاة
+    # زر تحميل البيانات
     st.download_button(
         label="⬇️ تحميل البيانات Excel",
         data=convert_df_to_excel(df_filtered),
@@ -103,36 +107,26 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # تحضير session_state لمنع التكرار
-    if 'last_scanned' not in st.session_state:
-        st.session_state['last_scanned'] = ""
-    if 'last_time' not in st.session_state:
-        st.session_state['last_time'] = 0
-
-    # البث المباشر باستخدام camera_input_live
-    st.subheader("📷 الكاميرا في الوقت الحقيقي لإدخال أو إخراج المنتجات")
-    run_camera = st.checkbox("تشغيل الكاميرا (بث مباشر)", value=False)
+    # الكاميرا للباركود باستخدام st.camera_input
+    st.subheader("📷 تشغيل الكاميرا لإدخال أو إخراج المنتجات")
+    run_camera = st.checkbox("تشغيل الكاميرا", value=False)
 
     if run_camera:
-        # debounce بـ 500 ميلي ثانية لضبط سرعة التحديث (يمكنك تعديلها)
-        image = camera_input_live(debounce=500, show_controls=True,
-                                  start_label="بدء الالتقاط", stop_label="إيقاف الالتقاط")
+        image = st.camera_input("التقط صورة للباركود أو QR")
 
         if image is not None:
-            # تحويل BytesIO إلى مصفوفة OpenCV
+            # تحويل الصورة إلى مصفوفة OpenCV
             bytes_data = image.getvalue()
             cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-            # قراءة الباركود أو QR
+            # قراءة الباركود من الصورة
             barcodes = decode(cv2_img)
             for barcode in barcodes:
                 code = barcode.data.decode("utf-8")
                 # منع التكرار السريع
-                if code != st.session_state['last_scanned'] or \
-                   time.time() - st.session_state['last_time'] > 3:
-                    st.session_state['last_scanned'] = code
-                    st.session_state['last_time'] = time.time()
-
+                if code != last_scanned or time.time() - last_time > 3:
+                    last_scanned = code
+                    last_time = time.time()
                     st.success(f"📥 تم قراءة الكود: `{code}`")
                     match = find_item(df, code)
 
@@ -151,13 +145,11 @@ def main():
                                     df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
                                 else:
                                     df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
-                                # حفظ التغييرات إذا لم يكن الملف مرفوعًا
                                 if uploaded_file is None:
                                     save_data(df)
                                 updated_row = find_item(df, code)
                                 st.success("✅ تم تحديث الكمية بنجاح.")
                                 st.dataframe(updated_row)
-
                     else:
                         st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
                         with st.form(f"new_form_{code}"):
