@@ -7,16 +7,15 @@ import os
 import time
 import io
 
-# مكوّن البث المباشر للفيديو
-from streamlit_webrtc import webrtc_streamer
-import av
+# المكوّن الجديد للبث المستمر من الكاميرا
+from camera_input_live import camera_input_live
 
 EXCEL_FILE = "Updated_Stock_Data.xlsx"
 SHEET_NAME = 0
 
-# تحميل البيانات من ملف ثابت أو ملف مرفوع
 @st.cache_data
 def load_data(file=None):
+    """تحميل البيانات من ملف مرفوع أو محلي"""
     if file is not None:
         df = pd.read_excel(file, sheet_name=SHEET_NAME, engine="openpyxl")
     elif os.path.exists(EXCEL_FILE):
@@ -33,17 +32,17 @@ def load_data(file=None):
     df["current_balance"] = df["in"].fillna(0) - df["out"].fillna(0)
     return df
 
-# حفظ البيانات في ملف إكسل محلي (فقط عند عدم استخدام ملف مرفوع)
 def save_data(df):
+    """حفظ البيانات في ملف إكسل محلي"""
     df.to_excel(EXCEL_FILE, index=False)
 
-# البحث عن منتج
 def find_item(df, code):
+    """البحث عن منتج بحسب رقم الكود"""
     return df[df["code num"].astype(str) == code]
 
-# تحويل البيانات إلى ملف Excel للتحميل
 @st.cache_data
 def convert_df_to_excel(dataframe):
+    """تحويل الداتا فريم إلى ملف إكسل"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         dataframe.to_excel(writer, index=False)
@@ -53,21 +52,20 @@ def main():
     st.set_page_config(page_title="Warehouse System", layout="wide")
     st.title("📦 Warehouse System with Barcode, Excel, and Analytics")
 
-    # رفع ملف الإكسل
+    # اختيار ملف إكسل من المستخدم
     uploaded_file = st.sidebar.file_uploader("⬆️ رفع ملف Excel", type=["xlsx"])
 
     # تحميل البيانات
     df = load_data(uploaded_file)
 
-    # عرض كامل البيانات
+    # عرض البيانات الكاملة
     with st.expander("📋 عرض البيانات الكاملة"):
         st.dataframe(df, use_container_width=True)
 
-    # الفلاتر
+    # فلاتر جانبية
     st.sidebar.header("🔍 فلترة")
     locations = df["LOCATION"].dropna().unique().tolist()
     units = df["Unit"].dropna().unique().tolist()
-
     selected_location = st.sidebar.selectbox("اختر الموقع", ["كل المواقع"] + locations)
     selected_unit = st.sidebar.selectbox("اختر الوحدة", ["كل الوحدات"] + units)
 
@@ -77,13 +75,12 @@ def main():
     if selected_unit != "كل الوحدات":
         df_filtered = df_filtered[df_filtered["Unit"] == selected_unit]
 
-    # الملخص والتحليل
+    # ملخص وتحليل البيانات
     st.subheader("📊 ملخص وتحليل البيانات")
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 عدد المنتجات", len(df_filtered))
     col2.metric("📍 عدد المواقع", df_filtered["LOCATION"].nunique())
     col3.metric("🧮 عدد الوحدات", df_filtered["Unit"].nunique())
-
     col4, col5, col6 = st.columns(3)
     col4.metric("📥 إجمالي الإدخال", int(df_filtered["in"].sum(skipna=True)))
     col5.metric("📤 إجمالي الإخراج", int(df_filtered["out"].sum(skipna=True)))
@@ -98,7 +95,7 @@ def main():
     st.subheader("🔝 أعلى العناصر حسب الكمية")
     st.dataframe(df_filtered.sort_values(by="Qty", ascending=False)[["Description", "Qty"]].head(10))
 
-    # زر تحميل البيانات
+    # زر تحميل البيانات المصفاة
     st.download_button(
         label="⬇️ تحميل البيانات Excel",
         data=convert_df_to_excel(df_filtered),
@@ -106,100 +103,87 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # تحضير متغيرات الجلسة لمسح الكود في الوقت الحقيقي
+    # تحضير session_state لمنع التكرار
     if 'last_scanned' not in st.session_state:
         st.session_state['last_scanned'] = ""
     if 'last_time' not in st.session_state:
         st.session_state['last_time'] = 0
-    if 'scanned_code' not in st.session_state:
-        st.session_state['scanned_code'] = None
 
-    # إعداد خادم STUN (لتجاوز مشكلة الاتصال البطيء)
-    RTC_CONFIGURATION = {
-        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-    }
-
-    # دالة معالجة كل إطار من الفيديو
-    def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        barcodes = decode(img)
-        for barcode in barcodes:
-            code = barcode.data.decode("utf-8")
-            # منع التكرار السريع
-            if code != st.session_state['last_scanned'] or time.time() - st.session_state['last_time'] > 3:
-                st.session_state['last_scanned'] = code
-                st.session_state['last_time'] = time.time()
-                st.session_state['scanned_code'] = code
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-    # الكاميرا في الوقت الحقيقي
+    # البث المباشر باستخدام camera_input_live
     st.subheader("📷 الكاميرا في الوقت الحقيقي لإدخال أو إخراج المنتجات")
     run_camera = st.checkbox("تشغيل الكاميرا (بث مباشر)", value=False)
 
     if run_camera:
-        webrtc_streamer(
-            key="barcode-scanner",
-            video_frame_callback=video_frame_callback,
-            media_stream_constraints={"video": True, "audio": False},
-            rtc_configuration=RTC_CONFIGURATION,  # تمرير إعداد STUN
-        )
+        # debounce بـ 500 ميلي ثانية لضبط سرعة التحديث (يمكنك تعديلها)
+        image = camera_input_live(debounce=500, show_controls=True,
+                                  start_label="بدء الالتقاط", stop_label="إيقاف الالتقاط")
 
-        # عند اكتشاف كود جديد، يتم عرضه ومعالجة البيانات
-        code = st.session_state.get('scanned_code')
-        if code:
-            st.success(f"📥 تم قراءة الكود: `{code}`")
-            match = find_item(df, code)
-            if not match.empty:
-                st.info("✅ العنصر موجود:")
-                st.dataframe(match)
+        if image is not None:
+            # تحويل BytesIO إلى مصفوفة OpenCV
+            bytes_data = image.getvalue()
+            cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-                with st.form(f"form_{code}"):
-                    operation = st.radio("العملية:", ["إدخال", "إخراج"])
-                    quantity = st.number_input("الكمية", min_value=1, value=1)
-                    submitted = st.form_submit_button("تأكيد")
+            # قراءة الباركود أو QR
+            barcodes = decode(cv2_img)
+            for barcode in barcodes:
+                code = barcode.data.decode("utf-8")
+                # منع التكرار السريع
+                if code != st.session_state['last_scanned'] or \
+                   time.time() - st.session_state['last_time'] > 3:
+                    st.session_state['last_scanned'] = code
+                    st.session_state['last_time'] = time.time()
 
-                    if submitted:
-                        idx = match.index[0]
-                        if operation == "إدخال":
-                            df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
-                        else:
-                            df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
-                        if uploaded_file is None:
-                            save_data(df)
-                        updated_row = find_item(df, code)
-                        st.success("✅ تم تحديث الكمية بنجاح.")
-                        st.dataframe(updated_row)
+                    st.success(f"📥 تم قراءة الكود: `{code}`")
+                    match = find_item(df, code)
 
-                # إعادة تعيين الكود لمنع المعالجة المتكررة
-                st.session_state['scanned_code'] = None
+                    if not match.empty:
+                        st.info("✅ العنصر موجود:")
+                        st.dataframe(match)
 
-            else:
-                st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
-                with st.form(f"new_form_{code}"):
-                    stock_code = st.text_input("Stock Code")
-                    desc = st.text_input("Description")
-                    unit = st.text_input("Unit")
-                    qty = st.number_input("Qty", min_value=0)
-                    location = st.text_input("LOCATION")
-                    submitted = st.form_submit_button("حفظ")
+                        with st.form(f"form_{code}"):
+                            operation = st.radio("العملية:", ["إدخال", "إخراج"])
+                            quantity = st.number_input("الكمية", min_value=1, value=1)
+                            submitted = st.form_submit_button("تأكيد")
 
-                    if submitted:
-                        new_row = {
-                            "Stock Code": stock_code,
-                            "Description": desc,
-                            "code num": code,
-                            "in": 0,
-                            "out": 0,
-                            "Unit": unit,
-                            "Qty": qty,
-                            "LOCATION": location
-                        }
-                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                        if uploaded_file is None:
-                            save_data(df)
-                        st.success("✅ تم حفظ المنتج الجديد.")
-                        st.dataframe(find_item(df, code))
-                        st.session_state['scanned_code'] = None
+                            if submitted:
+                                idx = match.index[0]
+                                if operation == "إدخال":
+                                    df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
+                                else:
+                                    df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
+                                # حفظ التغييرات إذا لم يكن الملف مرفوعًا
+                                if uploaded_file is None:
+                                    save_data(df)
+                                updated_row = find_item(df, code)
+                                st.success("✅ تم تحديث الكمية بنجاح.")
+                                st.dataframe(updated_row)
+
+                    else:
+                        st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
+                        with st.form(f"new_form_{code}"):
+                            stock_code = st.text_input("Stock Code")
+                            desc = st.text_input("Description")
+                            unit = st.text_input("Unit")
+                            qty = st.number_input("Qty", min_value=0)
+                            location = st.text_input("LOCATION")
+                            submitted = st.form_submit_button("حفظ")
+
+                            if submitted:
+                                new_row = {
+                                    "Stock Code": stock_code,
+                                    "Description": desc,
+                                    "code num": code,
+                                    "in": 0,
+                                    "out": 0,
+                                    "Unit": unit,
+                                    "Qty": qty,
+                                    "LOCATION": location
+                                }
+                                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                                if uploaded_file is None:
+                                    save_data(df)
+                                st.success("✅ تم حفظ المنتج الجديد.")
+                                st.dataframe(find_item(df, code))
 
 if __name__ == "__main__":
     main()
