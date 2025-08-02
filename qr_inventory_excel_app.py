@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import cv2
 from pyzbar.pyzbar import decode
+import numpy as np
 import os
 import time
 import io
@@ -12,11 +13,6 @@ SHEET_NAME = 0
 # تحميل البيانات من ملف ثابت أو ملف مرفوع
 @st.cache_data
 def load_data(file=None):
-    """
-    إذا تم تزويد معلمة file (ملف مرفوع)، فيتم القراءة منه مباشرة.
-    إذا لم يتم رفع ملف واكتُشِف ملف EXCEL_FILE، يتم القراءة منه.
-    في حال عدم وجود الملف، يتم إنشاء ملف جديد بعمود العناوين الافتراضية.
-    """
     if file is not None:
         df = pd.read_excel(file, sheet_name=SHEET_NAME, engine="openpyxl")
     elif os.path.exists(EXCEL_FILE):
@@ -27,7 +23,6 @@ def load_data(file=None):
         df.to_excel(EXCEL_FILE, index=False)
         return df
 
-    # تحويل الأعمدة الرقمية إلى أنواع صحيحة
     df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
     df["in"] = pd.to_numeric(df["in"], errors="coerce")
     df["out"] = pd.to_numeric(df["out"], errors="coerce")
@@ -50,28 +45,26 @@ def convert_df_to_excel(dataframe):
         dataframe.to_excel(writer, index=False)
     return output.getvalue()
 
-# منع التكرار السريع عند قراءة الباركود
 last_scanned = ""
 last_time = 0
 
-# ========= واجهة التطبيق الرئيسية =========
 def main():
     global last_scanned, last_time
 
     st.set_page_config(page_title="Warehouse System", layout="wide")
     st.title("📦 Warehouse System with Barcode, Excel, and Analytics")
 
-    # إضافة عنصر رفع ملف الإكسل في الشريط الجانبي
+    # رفع ملف الإكسل
     uploaded_file = st.sidebar.file_uploader("⬆️ رفع ملف Excel", type=["xlsx"])
 
-    # تحميل البيانات: إذا تم رفع ملف فيُحمَّل منه، وإلا من الملف الثابت
+    # تحميل البيانات
     df = load_data(uploaded_file)
 
-    # ========== عرض البيانات الكاملة ==========
+    # عرض كامل البيانات
     with st.expander("📋 عرض البيانات الكاملة"):
         st.dataframe(df, use_container_width=True)
 
-    # ========= فلاتر جانبية =========
+    # الفلاتر
     st.sidebar.header("🔍 فلترة")
     locations = df["LOCATION"].dropna().unique().tolist()
     units = df["Unit"].dropna().unique().tolist()
@@ -85,7 +78,7 @@ def main():
     if selected_unit != "كل الوحدات":
         df_filtered = df_filtered[df_filtered["Unit"] == selected_unit]
 
-    # ========= ملخص وتحليل =========
+    # الملخص والتحليل
     st.subheader("📊 ملخص وتحليل البيانات")
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 عدد المنتجات", len(df_filtered))
@@ -106,7 +99,7 @@ def main():
     st.subheader("🔝 أعلى العناصر حسب الكمية")
     st.dataframe(df_filtered.sort_values(by="Qty", ascending=False)[["Description", "Qty"]].head(10))
 
-    # زر تحميل البيانات المصفّاة إلى ملف إكسل
+    # زر تحميل البيانات
     st.download_button(
         label="⬇️ تحميل البيانات Excel",
         data=convert_df_to_excel(df_filtered),
@@ -114,26 +107,23 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # ========= الكاميرا للباركود =========
+    # الكاميرا للباركود باستخدام st.camera_input
     st.subheader("📷 تشغيل الكاميرا لإدخال أو إخراج المنتجات")
     run_camera = st.checkbox("تشغيل الكاميرا", value=False)
 
     if run_camera:
-        cap = cv2.VideoCapture(0)
-        stframe = st.empty()
+        image = st.camera_input("التقط صورة للباركود أو QR")
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                st.error("❌ لم يتم تشغيل الكاميرا")
-                break
+        if image is not None:
+            # تحويل الصورة إلى مصفوفة OpenCV
+            bytes_data = image.getvalue()
+            cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-            # قراءة الباركود من الإطار الحالي
-            barcodes = decode(frame)
+            # قراءة الباركود من الصورة
+            barcodes = decode(cv2_img)
             for barcode in barcodes:
                 code = barcode.data.decode("utf-8")
-
-                # منع التكرار السريع في القراءة
+                # منع التكرار السريع
                 if code != last_scanned or time.time() - last_time > 3:
                     last_scanned = code
                     last_time = time.time()
@@ -155,13 +145,11 @@ def main():
                                     df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
                                 else:
                                     df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
-                                # في حال عدم استخدام ملف مرفوع، نحفظ في الملف المحلي
                                 if uploaded_file is None:
                                     save_data(df)
                                 updated_row = find_item(df, code)
                                 st.success("✅ تم تحديث الكمية بنجاح.")
                                 st.dataframe(updated_row)
-
                     else:
                         st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
                         with st.form(f"new_form_{code}"):
@@ -188,12 +176,6 @@ def main():
                                     save_data(df)
                                 st.success("✅ تم حفظ المنتج الجديد.")
                                 st.dataframe(find_item(df, code))
-
-            # عرض الإطار الحالي للكاميرا في واجهة التطبيق
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            stframe.image(frame, channels="RGB")
-
-        cap.release()
 
 if __name__ == "__main__":
     main()
