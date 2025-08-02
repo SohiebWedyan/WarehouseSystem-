@@ -4,3 +4,5 @@ opencv-python-headless
 pyzbar
 openpyxl
 numpy
+streamlit-webrtc
+av
