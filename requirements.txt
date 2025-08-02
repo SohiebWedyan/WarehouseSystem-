@@ -6,3 +6,4 @@ openpyxl
 numpy
 streamlit-webrtc
 streamlit-camera-input-live
+av
