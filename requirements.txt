@@ -5,4 +5,4 @@ pyzbar
 openpyxl
 numpy
 streamlit-webrtc
-av
+streamlit-camera-input-live
