@@ -7,7 +7,7 @@ import os
 import time
 import io
 
-# مكونات البث المباشر للفيديو
+# مكوّن البث المباشر للفيديو
 from streamlit_webrtc import webrtc_streamer
 import av
 
@@ -114,6 +114,11 @@ def main():
     if 'scanned_code' not in st.session_state:
         st.session_state['scanned_code'] = None
 
+    # إعداد خادم STUN (لتجاوز مشكلة الاتصال البطيء)
+    RTC_CONFIGURATION = {
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    }
+
     # دالة معالجة كل إطار من الفيديو
     def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
@@ -136,6 +141,7 @@ def main():
             key="barcode-scanner",
             video_frame_callback=video_frame_callback,
             media_stream_constraints={"video": True, "audio": False},
+            rtc_configuration=RTC_CONFIGURATION,  # تمرير إعداد STUN
         )
 
         # عند اكتشاف كود جديد، يتم عرضه ومعالجة البيانات
