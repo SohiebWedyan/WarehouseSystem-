@@ -5,6 +5,7 @@ import time
 import io
 
 
+
 EXCEL_FILE = "Updated_Stock_Data.xlsx"
 SHEET_NAME = 0  # يمكن تغييرها إذا كان اسم الورقة مختلفًا
 
@@ -60,6 +61,14 @@ def main():
 
     # تحميل البيانات من الملف المرفوع أو الملف الثابت
     df = load_data(uploaded_file)
+
+    # إذا لم يتم تعريف متغيرات الحالة، نقوم بتعيينها
+    # يستخدم operation_in_progress لمنع بدء عملية جديدة قبل انتهاء الحالية
+    # current_code يحتفظ بالكود الجاري معالجته
+    if "operation_in_progress" not in st.session_state:
+        st.session_state["operation_in_progress"] = False
+    if "current_code" not in st.session_state:
+        st.session_state["current_code"] = None
 
     # ------- عرض البيانات الكاملة وتحميلها -------
     with st.expander("📋 عرض البيانات الكاملة"):
@@ -121,68 +130,80 @@ def main():
 
     if barcode_input:
         code = barcode_input
-        match = find_item(df, code)
-
-        if not match.empty:
-            # المنتج موجود
-            st.info("✅ العنصر موجود:")
-            st.dataframe(match)
-            # نموذج لإجراء التحديث مع طلب تأكيد من المستخدم
-            form_key = f"form_{code}_{int(time.time())}"
-            with st.form(form_key):
-                operation = st.radio("العملية:", ["إدخال", "إخراج"])
-                quantity = st.number_input("الكمية", min_value=1, value=1)
-                confirm = st.radio("هل تريد تنفيذ التحديث وحفظه؟", ["نعم", "لا"])
-                submitted = st.form_submit_button("تأكيد")
-                if submitted:
-                    if confirm == "نعم":
-                        idx = match.index[0]
-                        if operation == "إدخال":
-                            df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
-                        else:
-                            df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
-                        # حفظ التغييرات في الملف المحلي فقط إذا لم يكن هناك ملف مرفوع
-                        if uploaded_file is None:
-                            save_data(df)
-                        updated_row = find_item(df, code)
-                        st.success("✅ تم تحديث الكمية بنجاح.")
-                        st.dataframe(updated_row)
-                    else:
-                        st.info("❎ تم إلغاء العملية. لم يتم تحديث أي قيمة.")
-
+        # إذا كانت هناك عملية أخرى قيد التنفيذ وترغب بمعالجة كود آخر، نُوقف التنفيذ
+        if st.session_state.get("operation_in_progress", False) and st.session_state.get("current_code") != code:
+            st.warning("⚠️ هناك عملية قيد التنفيذ. يرجى إكمالها أو إلغاؤها قبل البدء بعملية جديدة.")
         else:
-            # المنتج غير موجود: إدخال بيانات المنتج الجديد
-            st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
-            new_form_key = f"new_form_{code}_{int(time.time())}"
-            with st.form(new_form_key):
-                stock_code = st.text_input("Stock Code")
-                desc = st.text_input("Description")
-                unit = st.text_input("Unit")
-                qty = st.number_input("Qty", min_value=0)
-                location = st.text_input("LOCATION")
-                confirm_add = st.radio("هل تريد إضافة المنتج وحفظه؟", ["نعم", "لا"])
-                submitted = st.form_submit_button("حفظ")
-                if submitted:
-                    if confirm_add == "نعم":
-                        new_row = {
-                            "Stock Code": stock_code,
-                            "Description": desc,
-                            "code num": code,
-                            "in": 0,
-                            "out": 0,
-                            "Unit": unit,
-                            "Qty": qty,
-                            "LOCATION": location
-                        }
-                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                        if uploaded_file is None:
-                            save_data(df)
-                        st.success("✅ تم حفظ المنتج الجديد.")
-                        st.dataframe(find_item(df, code))
-                    else:
-                        st.info("❎ تم إلغاء إضافة المنتج الجديد.")
+            # ضبط الحالة بأن هناك عملية جارية لهذا الكود
+            st.session_state["operation_in_progress"] = True
+            st.session_state["current_code"] = code
+            match = find_item(df, code)
+
+            if not match.empty:
+                # المنتج موجود
+                st.info("✅ العنصر موجود:")
+                st.dataframe(match)
+                # نموذج لإجراء التحديث مع طلب تأكيد من المستخدم
+                form_key = f"form_{code}_{int(time.time())}"
+                with st.form(form_key):
+                    operation = st.radio("العملية:", ["إدخال", "إخراج"])
+                    quantity = st.number_input("الكمية", min_value=1, value=1)
+                    confirm = st.radio("هل تريد تنفيذ التحديث وحفظه؟", ["نعم", "لا"])
+                    submitted = st.form_submit_button("تأكيد")
+                    if submitted:
+                        if confirm == "نعم":
+                            idx = match.index[0]
+                            if operation == "إدخال":
+                                df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
+                            else:
+                                df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
+                            # حفظ التغييرات في الملف المحلي فقط إذا لم يكن هناك ملف مرفوع
+                            if uploaded_file is None:
+                                save_data(df)
+                            updated_row = find_item(df, code)
+                            st.success("✅ تم تحديث الكمية بنجاح.")
+                            st.dataframe(updated_row)
+                        else:
+                            st.info("❎ تم إلغاء العملية. لم يتم تحديث أي قيمة.")
+                        # في جميع الأحوال ننهي العملية الحالية
+                        st.session_state["operation_in_progress"] = False
+                        st.session_state["current_code"] = None
+
+            else:
+                # المنتج غير موجود: إدخال بيانات المنتج الجديد
+                st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
+                new_form_key = f"new_form_{code}_{int(time.time())}"
+                with st.form(new_form_key):
+                    stock_code = st.text_input("Stock Code")
+                    desc = st.text_input("Description")
+                    unit = st.text_input("Unit")
+                    qty = st.number_input("Qty", min_value=0)
+                    location = st.text_input("LOCATION")
+                    confirm_add = st.radio("هل تريد إضافة المنتج وحفظه؟", ["نعم", "لا"])
+                    submitted = st.form_submit_button("حفظ")
+                    if submitted:
+                        if confirm_add == "نعم":
+                            new_row = {
+                                "Stock Code": stock_code,
+                                "Description": desc,
+                                "code num": code,
+                                "in": 0,
+                                "out": 0,
+                                "Unit": unit,
+                                "Qty": qty,
+                                "LOCATION": location
+                            }
+                            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                            if uploaded_file is None:
+                                save_data(df)
+                            st.success("✅ تم حفظ المنتج الجديد.")
+                            st.dataframe(find_item(df, code))
+                        else:
+                            st.info("❎ تم إلغاء إضافة المنتج الجديد.")
+                        # إنهاء العملية بعد إضافة المنتج الجديد أو إلغاء الإضافة
+                        st.session_state["operation_in_progress"] = False
+                        st.session_state["current_code"] = None
 
 
 if __name__ == "__main__":
     main()
-
