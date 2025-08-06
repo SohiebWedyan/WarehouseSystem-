@@ -4,17 +4,23 @@ import os
 import time
 import io
 
-EXCEL_FILE = "Updated_Stock_Data.xlsx"
-SHEET_NAME = 0
+"""
+تطبيق مستودع مبني باستخدام Streamlit يعمل مع ملف Excel ثابت أو مرفوع،
+ويدعم إدخال الكود عبر قارئ باركود/إدخال يدوي. يوفر تحليلات، فلاتر،
+وتحديث مباشر لقيم الأعمدة `in` و `out` مع طلب تأكيد من المستخدم قبل
+تنفيذ التعديل أو إضافة منتج جديد. إذا لم يكن هناك ملف مرفوع، يتم
+حفظ التغييرات في الملف المحلي.
+"""
 
-# تحميل البيانات من ملف ثابت أو ملف مرفوع
+EXCEL_FILE = "Updated_Stock_Data.xlsx"
+SHEET_NAME = 0  # يمكن تغييرها إذا كان اسم الورقة مختلفًا
+
+
 @st.cache_data
 def load_data(file=None):
-    """
-    إذا تم تزويد معلمة file (ملف مرفوع)، فيتم القراءة منه مباشرة.
-    إذا لم يتم رفع ملف واكتُشِف ملف EXCEL_FILE، يتم القراءة منه.
-    في حال عدم وجود الملف، يتم إنشاء ملف جديد بأعمدة العناوين الافتراضية.
-    """
+    """تحميل البيانات من ملف Excel. إذا تم تقديم ملف مرفوع، يستخدمه مباشرة.
+    إذا لم يُرفع ملف ويُوجد ملف ثابت محلي، يُقرأ منه. وإلا يتم إنشاء
+    ملف جديد بأعمدة افتراضية."""
     if file is not None:
         df = pd.read_excel(file, sheet_name=SHEET_NAME, engine="openpyxl")
     elif os.path.exists(EXCEL_FILE):
@@ -25,44 +31,47 @@ def load_data(file=None):
         df.to_excel(EXCEL_FILE, index=False)
         return df
 
-    # تحويل الأعمدة الرقمية إلى أنواع صحيحة
+    # تحويل الأعمدة الرقمية للتأكد من العمليات الحسابية
     df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
     df["in"] = pd.to_numeric(df["in"], errors="coerce")
     df["out"] = pd.to_numeric(df["out"], errors="coerce")
     df["current_balance"] = df["in"].fillna(0) - df["out"].fillna(0)
     return df
 
-# حفظ البيانات في ملف إكسل محلي (فقط عند عدم استخدام ملف مرفوع)
+
 def save_data(df):
+    """يحفظ إطار البيانات في الملف المحلي فقط عند عدم استخدام ملف مرفوع."""
     df.to_excel(EXCEL_FILE, index=False)
 
-# البحث عن منتج
+
 def find_item(df, code):
+    """إرجاع الصفوف التي تطابق قيمة code في عمود 'code num'."""
     return df[df["code num"].astype(str) == code]
 
-# تحويل البيانات إلى ملف Excel للتحميل
+
 @st.cache_data
 def convert_df_to_excel(dataframe):
+    """تحويل إطار بيانات إلى ملف Excel في الذاكرة لإمكانية التحميل."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         dataframe.to_excel(writer, index=False)
     return output.getvalue()
 
-# ========= واجهة التطبيق الرئيسية =========
+
 def main():
     st.set_page_config(page_title="Warehouse System", layout="wide")
     st.title("📦 Warehouse System with Barcode, Excel, and Analytics")
 
-    # إضافة عنصر رفع ملف الإكسل في الشريط الجانبي
+    # عنصر رفع ملف في الشريط الجانبي
     uploaded_file = st.sidebar.file_uploader("⬆️ رفع ملف Excel", type=["xlsx"])
 
-    # تحميل البيانات: إذا تم رفع ملف فيُحمَّل منه، وإلا من الملف الثابت
+    # تحميل البيانات من الملف المرفوع أو الملف الثابت
     df = load_data(uploaded_file)
 
-    # ========== عرض البيانات الكاملة ==========
+    # ------- عرض البيانات الكاملة وتحميلها -------
     with st.expander("📋 عرض البيانات الكاملة"):
         st.dataframe(df, use_container_width=True)
-        # زر تحميل كل البيانات بصيغة Excel
+        # زر لتحميل كل البيانات
         st.download_button(
             label="⬇️ تحميل كل البيانات Excel",
             data=convert_df_to_excel(df),
@@ -70,11 +79,10 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # ========= فلاتر جانبية =========
+    # ------- فلاتر جانبية -------
     st.sidebar.header("🔍 فلترة")
     locations = df["LOCATION"].dropna().unique().tolist()
     units = df["Unit"].dropna().unique().tolist()
-
     selected_location = st.sidebar.selectbox("اختر الموقع", ["كل المواقع"] + locations)
     selected_unit = st.sidebar.selectbox("اختر الوحدة", ["كل الوحدات"] + units)
 
@@ -84,7 +92,7 @@ def main():
     if selected_unit != "كل الوحدات":
         df_filtered = df_filtered[df_filtered["Unit"] == selected_unit]
 
-    # ========= ملخص وتحليل =========
+    # ------- ملخص وتحليل -------
     st.subheader("📊 ملخص وتحليل البيانات")
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 عدد المنتجات", len(df_filtered))
@@ -96,6 +104,7 @@ def main():
     col5.metric("📤 إجمالي الإخراج", int(df_filtered["out"].sum(skipna=True)))
     col6.metric("📦 إجمالي الكمية", int(df_filtered["Qty"].sum(skipna=True)))
 
+    # رسوم بيانية بسيطة
     st.subheader("📍 الكمية حسب الموقع")
     st.bar_chart(df_filtered.groupby("LOCATION")["Qty"].sum())
 
@@ -105,7 +114,7 @@ def main():
     st.subheader("🔝 أعلى العناصر حسب الكمية")
     st.dataframe(df_filtered.sort_values(by="Qty", ascending=False)[["Description", "Qty"]].head(10))
 
-    # زر تحميل البيانات المصفاة إلى ملف إكسل
+    # زر تحميل البيانات المصفاة
     st.download_button(
         label="⬇️ تحميل البيانات المصفّاة Excel",
         data=convert_df_to_excel(df_filtered),
@@ -113,62 +122,73 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # ========= إدخال الباركود يدويًا أو باستخدام قارئ الباركود =========
+    # ------- إدخال الكود يدويًا أو عبر قارئ الباركود -------
     st.subheader("📥 إدخال كود المنتج يدويًا أو باستخدام جهاز قارئ الباركود")
-    barcode_input = st.text_input("🔎 أدخل أو امسح الباركود هنا", key="barcode_input")
+    barcode_input = st.text_input("🔎 أدخل أو امسح الباركود هنا", key="barcode_input").strip()
 
     if barcode_input:
-        code = barcode_input.strip()
+        code = barcode_input
         match = find_item(df, code)
 
         if not match.empty:
+            # المنتج موجود
             st.info("✅ العنصر موجود:")
             st.dataframe(match)
-
-            with st.form(f"form_{code}_{int(time.time())}"):  # مفتاح فريد للنموذج
+            # نموذج لإجراء التحديث مع طلب تأكيد من المستخدم
+            form_key = f"form_{code}_{int(time.time())}"
+            with st.form(form_key):
                 operation = st.radio("العملية:", ["إدخال", "إخراج"])
                 quantity = st.number_input("الكمية", min_value=1, value=1)
+                confirm = st.radio("هل تريد تنفيذ التحديث وحفظه؟", ["نعم", "لا"])
                 submitted = st.form_submit_button("تأكيد")
-
                 if submitted:
-                    idx = match.index[0]
-                    if operation == "إدخال":
-                        df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
+                    if confirm == "نعم":
+                        idx = match.index[0]
+                        if operation == "إدخال":
+                            df.at[idx, "in"] = (df.at[idx, "in"] if pd.notna(df.at[idx, "in"]) else 0) + quantity
+                        else:
+                            df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
+                        # حفظ التغييرات في الملف المحلي فقط إذا لم يكن هناك ملف مرفوع
+                        if uploaded_file is None:
+                            save_data(df)
+                        updated_row = find_item(df, code)
+                        st.success("✅ تم تحديث الكمية بنجاح.")
+                        st.dataframe(updated_row)
                     else:
-                        df.at[idx, "out"] = (df.at[idx, "out"] if pd.notna(df.at[idx, "out"]) else 0) + quantity
-                    # إذا لم يكن هناك ملف مرفوع، يتم حفظ البيانات في الملف المحلي
-                    if uploaded_file is None:
-                        save_data(df)
-                    updated_row = find_item(df, code)
-                    st.success("✅ تم تحديث الكمية بنجاح.")
-                    st.dataframe(updated_row)
+                        st.info("❎ تم إلغاء العملية. لم يتم تحديث أي قيمة.")
 
         else:
+            # المنتج غير موجود: إدخال بيانات المنتج الجديد
             st.warning("❗ الكود غير موجود. الرجاء إدخال معلوماته:")
-            with st.form(f"new_form_{code}_{int(time.time())}"):
+            new_form_key = f"new_form_{code}_{int(time.time())}"
+            with st.form(new_form_key):
                 stock_code = st.text_input("Stock Code")
                 desc = st.text_input("Description")
                 unit = st.text_input("Unit")
                 qty = st.number_input("Qty", min_value=0)
                 location = st.text_input("LOCATION")
+                confirm_add = st.radio("هل تريد إضافة المنتج وحفظه؟", ["نعم", "لا"])
                 submitted = st.form_submit_button("حفظ")
-
                 if submitted:
-                    new_row = {
-                        "Stock Code": stock_code,
-                        "Description": desc,
-                        "code num": code,
-                        "in": 0,
-                        "out": 0,
-                        "Unit": unit,
-                        "Qty": qty,
-                        "LOCATION": location
-                    }
-                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    if uploaded_file is None:
-                        save_data(df)
-                    st.success("✅ تم حفظ المنتج الجديد.")
-                    st.dataframe(find_item(df, code))
+                    if confirm_add == "نعم":
+                        new_row = {
+                            "Stock Code": stock_code,
+                            "Description": desc,
+                            "code num": code,
+                            "in": 0,
+                            "out": 0,
+                            "Unit": unit,
+                            "Qty": qty,
+                            "LOCATION": location
+                        }
+                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                        if uploaded_file is None:
+                            save_data(df)
+                        st.success("✅ تم حفظ المنتج الجديد.")
+                        st.dataframe(find_item(df, code))
+                    else:
+                        st.info("❎ تم إلغاء إضافة المنتج الجديد.")
+
 
 if __name__ == "__main__":
     main()
